@@ -64,6 +64,7 @@ pub(crate) mod monomorphize;
 pub(crate) mod return_unify;
 pub(crate) mod tuple_compare_lower;
 pub(crate) mod tuple_decompose;
+pub(crate) mod tuple_destructuring;
 pub(crate) mod udt_erase;
 
 #[cfg(any(test, feature = "testutil"))]
@@ -453,6 +454,8 @@ fn tuple_decompose_arg_promote_fixed_point(
         }
         rounds += 1;
         if rounds >= TUPLE_DECOMPOSE_ARG_PROMOTE_FIXPOINT_CAP {
+            // This isn't reachable in practice but provides an escape mechanism
+            // if somehow an adversarial input is created.
             result
                 .warnings
                 .push(PipelineError::TupleDecomposeArgPromoteFixpointNotReached(

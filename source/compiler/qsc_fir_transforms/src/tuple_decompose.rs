@@ -45,6 +45,7 @@ use crate::fir_builder::{
     alloc_local_var_expr, decompose_binding, functored_specs, reachable_local_callables,
 };
 use crate::reachability::collect_reachable_from_entry;
+use crate::tuple_destructuring::normalize_tuple_destructuring;
 use crate::walk_utils::{collect_expr_ids_in_local_callables, collect_uses_in_block};
 use qsc_data_structures::span::Span;
 use qsc_fir::assigner::Assigner;
@@ -104,6 +105,9 @@ pub fn tuple_decompose(
     let mut changed = false;
     loop {
         let reachable = collect_reachable_from_entry(store, package_id);
+
+        changed |= normalize_tuple_destructuring(store, package_id, assigner);
+
         let package = store.get(package_id);
 
         // Collect candidates across all reachable callables.

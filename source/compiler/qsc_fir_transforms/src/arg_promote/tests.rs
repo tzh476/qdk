@@ -3,9 +3,8 @@
 
 use super::*;
 use crate::test_utils::{
-    PipelineStage, check_semantic_equivalence, compile_and_run_pipeline_to,
-    compile_and_run_pipeline_to_with_errors, compile_to_fir, find_callable, format_pat,
-    local_names,
+    PipelineStage, check_semantic_equivalence, compile_and_run_pipeline_to, compile_to_fir,
+    find_callable, format_pat, local_names,
 };
 use expect_test::{Expect, expect};
 use indoc::indoc;
@@ -2473,8 +2472,9 @@ fn before_after_non_parameter_local_destructure_is_normalized_and_scalar_replace
             function Main() : Int {
                 let a : Int = 10;
                 let b : Int = 20;
-                let t : (Int, Int) = (a, b);
-                let (x : Int, y : Int) = t;
+                let (t_0 : Int, t_1 : Int) = (a, b);
+                let x : Int = t_0;
+                let y : Int = t_1;
                 x + y
             }
             // entry
@@ -2584,7 +2584,8 @@ fn reachable_caller_call_site_promoted_dead_caller_unobserved() {
                 Foo(1, 2)
             }
             operation Foo(x : (Int, Int)) : Int {
-                let (a : Int, b : Int) = x;
+                let a : Int = x::Item < 0 >;
+                let b : Int = x::Item < 1 >;
                 a + b
             }
             operation Dead() : Int {
@@ -2627,7 +2628,8 @@ fn non_udt_tuple_destructure_is_promoted() {
             BEFORE:
             // namespace test
             function Foo(x : (Int, Int)) : Int {
-                let (a : Int, b : Int) = x;
+                let a : Int = x::Item < 0 >;
+                let b : Int = x::Item < 1 >;
                 a + b
             }
             function Main() : Int {
@@ -2667,7 +2669,7 @@ fn non_udt_tuple_destructure_with_discard_is_promoted() {
             BEFORE:
             // namespace test
             function Foo(x : (Int, Int)) : Int {
-                let (a : Int, _ : Int) = x;
+                let a : Int = x::Item < 0 >;
                 a + 1
             }
             function Main() : Int {
@@ -2707,7 +2709,7 @@ fn non_udt_tuple_destructure_name_shadowing() {
             BEFORE:
             // namespace test
             function Foo(x : (Int, Int)) : Int {
-                let (x : Int, _ : Int) = x;
+                let x : Int = x::Item < 0 >;
                 x + 1
             }
             function Main() : Int {
@@ -2746,7 +2748,9 @@ fn nested_non_udt_tuple_destructure_is_promoted() {
             BEFORE:
             // namespace test
             function Foo(x : ((Int, Int), Int)) : Int {
-                let ((a : Int, b : Int), c : Int) = x;
+                let a : Int = x::Item < 0 >::Item < 0 >;
+                let b : Int = x::Item < 0 >::Item < 1 >;
+                let c : Int = x::Item < 1 >;
                 a + b + c
             }
             function Main() : Int {
@@ -2788,7 +2792,10 @@ fn deeply_nested_tuple_destructure_param_promotes_temp_free() {
             BEFORE:
             // namespace test
             function Foo(x : (Int, (Int, (Int, Int)))) : Int {
-                let (a : Int, (b : Int, (c : Int, d : Int))) = x;
+                let a : Int = x::Item < 0 >;
+                let b : Int = x::Item < 1 >::Item < 0 >;
+                let c : Int = x::Item < 1 >::Item < 1 >::Item < 0 >;
+                let d : Int = x::Item < 1 >::Item < 1 >::Item < 1 >;
                 a + b + c + d
             }
             function Main() : Int {
@@ -2830,7 +2837,8 @@ fn flat_abi_mixed_discard_nested_param() {
             BEFORE:
             // namespace test
             function Foo(x : (Int, (Int, Int))) : Int {
-                let (a : Int, (_ : Int, c : Int)) = x;
+                let a : Int = x::Item < 0 >;
+                let c : Int = x::Item < 1 >::Item < 1 >;
                 a + c
             }
             function Main() : Int {
@@ -2946,8 +2954,12 @@ fn flat_abi_multiple_distinct_nested_params_on_one_callable() {
             BEFORE:
             // namespace test
             function Foo(a : (Int, (Int, Int)), b : ((Int, Int), Int)) : Int {
-                let (a0 : Int, (a1 : Int, a2 : Int)) = a;
-                let ((b0 : Int, b1 : Int), b2 : Int) = b;
+                let a0 : Int = a::Item < 0 >;
+                let a1 : Int = a::Item < 1 >::Item < 0 >;
+                let a2 : Int = a::Item < 1 >::Item < 1 >;
+                let b0 : Int = b::Item < 0 >::Item < 0 >;
+                let b1 : Int = b::Item < 0 >::Item < 1 >;
+                let b2 : Int = b::Item < 1 >;
                 a0 + a1 + a2 + b0 + b1 + b2
             }
             function Main() : Int {
@@ -3066,46 +3078,5 @@ fn build_leaf_tuple_interior_whole_tuple_read_preserves_values() {
                 let inner = GetInner(outer);
                 inner.A * 10 + inner.B
             }",
-    );
-}
-
-#[test]
-fn arg_promote_fixpoint_cap_emits_nonfatal_warning() {
-    // Force the tuple-decompose <-> argument-promotion fixed-point loop to exhaust its
-    // hard cap with a minimal copy-alias chain. The chain length K = 63 yields
-    // rounds = K + 1 = 64, which reaches `TUPLE_DECOMPOSE_ARG_PROMOTE_FIXPOINT_CAP` and
-    // emits the non-fatal warning while still producing consumable FIR.
-    use std::fmt::Write as _;
-
-    let mut body = String::from("let t0 = (1, 2);\n");
-    for i in 1..=63 {
-        let prev = i - 1;
-        writeln!(body, "            let t{i} = t{prev};").expect("writing to a String");
-    }
-    body.push_str("            let (x, y) = t63;\n");
-    body.push_str("            x + y\n");
-    let source = format!(
-        "@EntryPoint()
-        operation Main() : Int {{
-{body}        }}"
-    );
-
-    let (_store, _pkg_id, result) =
-        compile_and_run_pipeline_to_with_errors(&source, PipelineStage::Full);
-
-    // Cap exhaustion is a divergence backstop, never a miscompile: the pipeline
-    // still succeeds.
-    assert!(
-        result.is_success(),
-        "fixed-point cap exhaustion must be non-fatal: {:?}",
-        result.errors
-    );
-    assert!(
-        result.warnings.iter().any(|w| matches!(
-            w,
-            crate::PipelineError::TupleDecomposeArgPromoteFixpointNotReached(64)
-        )),
-        "expected the fixed-point cap warning TupleDecomposeArgPromoteFixpointNotReached(64): {:?}",
-        result.warnings
     );
 }
