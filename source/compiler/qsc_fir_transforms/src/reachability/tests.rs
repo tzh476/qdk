@@ -271,6 +271,36 @@ fn simulatable_intrinsic_callable_reachable() {
 }
 
 #[test]
+fn item_referenced_only_from_simulatable_intrinsic_body_is_not_reachable() {
+    // A helper referenced ONLY from a @SimulatableIntrinsic body must NOT be
+    // kept reachable: for QIR codegen the simulatable intrinsic behaves like
+    // an intrinsic, so reachability does not descend its simulation body.
+    // `SimHelper` is reached only through `SimOp`'s body, so it is excluded;
+    // `RealHelper` is reached through `Main`'s body, so it is included.
+    check(
+        indoc! {"
+                namespace Test {
+                    function SimHelper() : Unit {}
+                    function RealHelper() : Unit {}
+                    @SimulatableIntrinsic()
+                    operation SimOp() : Unit {
+                        SimHelper();
+                    }
+                    @EntryPoint()
+                    operation Main() : Unit {
+                        SimOp();
+                        RealHelper();
+                    }
+                }
+            "},
+        &expect![[r#"
+                Main
+                RealHelper
+                SimOp"#]],
+    );
+}
+
+#[test]
 fn dangling_item_reference_is_ignored() {
     let (mut store, pkg_id) = crate::test_utils::compile_to_fir(indoc! {"
             namespace Test {

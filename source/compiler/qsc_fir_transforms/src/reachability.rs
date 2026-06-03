@@ -157,6 +157,18 @@ fn walk_callable_impl(
     callable_impl: &CallableImpl,
     worklist: &mut Vec<StoreItemId>,
 ) {
+    if matches!(callable_impl, CallableImpl::SimulatableIntrinsic(_)) {
+        // A `@SimulatableIntrinsic` callable carries a simulation override body that
+        // is meaningful only to the simulator. For QIR code generation the callable
+        // behaves like an intrinsic, so reachability treats it as bodyless and does
+        // **not** descend its simulation body. As a result, items referenced *only*
+        // from a simulation body are not kept reachable and are pruned by item DCE,
+        // rather than being monomorphized, type-erased, and processed as if they were
+        // part of the generated program. The simulation body itself is left intact in
+        // the FIR; partial evaluation still classically evaluates it through the
+        // separate `qsc_eval` interpreter path when a call is purely classical.
+        return;
+    }
     let pkg = store.get(pkg_id);
     crate::walk_utils::for_each_expr_in_callable_impl(pkg, callable_impl, &mut |_eid, expr| {
         match &expr.kind {
